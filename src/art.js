@@ -10,3 +10,7 @@ export function artBg(t) {
 }
 export const artUrl = (t) => (t.pic ? urls.get(t.id) : undefined)
 export const fmt = (s) => (isFinite(s) ? Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0') : '0:00')
+// Cover for a group of songs (album, artist, playlist): first real cover art, else a colour from the name.
+export function coverFor(items, name) {
+  return items.find((t) => t.pic) || { id: 'g:' + name, title: name || '?' }
+}

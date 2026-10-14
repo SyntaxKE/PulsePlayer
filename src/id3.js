@@ -16,7 +16,7 @@ export async function readTags(file) {
       const s = p + 10
       if (fs <= 1 || s + fs > b.byteLength) break
       const enc = b.getUint8(s)
-      if (id === 'TIT2' || id === 'TPE1') {
+      if (id === 'TIT2' || id === 'TPE1' || id === 'TALB') {
         const label = enc === 1 ? 'utf-16' : enc === 2 ? 'utf-16be' : enc === 3 ? 'utf-8' : 'iso-8859-1'
         o[id] = new TextDecoder(label).decode(new Uint8Array(b.buffer, s + 1, fs - 1)).replace(/\0/g, '').trim()
       }
