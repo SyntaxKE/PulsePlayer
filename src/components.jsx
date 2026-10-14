@@ -83,7 +83,7 @@ export function FullPlayer({ t, open, playing, time, shuf, rep, vol, liked, onLi
     <div className={'full' + (open ? ' open' : '') + (playing ? ' playing' : '')}>
       <div className="fbg" style={{ background: bg }} />
       <button className="close" onClick={onClose} aria-label="Close" />
-      <div className="fart" style={{ background: bg }}>{t && !t.pic ? (t.title.trim()[0] || '♪').toUpperCase() : ''}</div>
+      <div className="fart" style={{ background: bg }}>{t && !t.pic && !t.artUrl ? (t.title.trim()[0] || '♪').toUpperCase() : ''}</div>
       <div className="meta">
         <div className="mt"><h2>{t ? t.title : 'Nothing playing'}</h2><p>{t ? t.artist : '—'}</p></div>
         {t && <button className="hb" onClick={onLike} aria-label="Like"><Icon n="heart" on={liked} /></button>}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { openDB, getAll, put, del } from './db.js'
 import { readTags } from './id3.js'
+import { searchOnline, trending, downloadOffline } from './online.js'
 import { artBg, artUrl, coverFor } from './art.js'
 import { Row, Item, Card, Sheet, MiniPlayer, FullPlayer, QueueView, DetailHead } from './components.jsx'
 
@@ -18,6 +19,7 @@ export default function App() {
   const db = useRef(null)
   const objUrl = useRef(null)
   const fileIn = useRef(null)
+  const toastT = useRef(null)
 
   const [tracks, setTracks] = useState([])
   const [playlists, setPlaylists] = useState([])
@@ -38,6 +40,12 @@ export default function App() {
   const [sheet, setSheet] = useState(null)
   const [q, setQ] = useState('')
   const [online, setOnline] = useState(navigator.onLine)
+  const [netTracks, setNetTracks] = useState({})
+  const [trend, setTrend] = useState([])
+  const [results, setResults] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [mode, setMode] = useState('online')
+  const [toast, setToast] = useState('')
 
   useEffect(() => {
     (async () => {
@@ -54,7 +62,25 @@ export default function App() {
     return () => { removeEventListener('online', on); removeEventListener('offline', off) }
   }, [])
 
-  const byId = useMemo(() => new Map(tracks.map((t) => [t.id, t])), [tracks])
+  const byId = useMemo(() => new Map([...Object.values(netTracks), ...tracks].map((t) => [t.id, t])), [tracks, netTracks])
+
+  // ---------- online catalog ----------
+  function registerNet(list) { setNetTracks((m) => { const n = { ...m }; list.forEach((t) => (n[t.id] = t)); return n }) }
+  function flash(m) { setToast(m); clearTimeout(toastT.current); toastT.current = setTimeout(() => setToast(''), 2600) }
+  useEffect(() => {
+    if (online && !trend.length) trending().then((l) => { registerNet(l); setTrend(l) }).catch(() => {})
+  }, [online]) // eslint-disable-line
+  useEffect(() => {
+    const s = q.trim()
+    if (mode !== 'online' || s.length < 2 || !online) { setResults([]); setSearching(false); return }
+    let live = true
+    setSearching(true)
+    const h = setTimeout(() => {
+      searchOnline(s).then((l) => { if (live) { registerNet(l); setResults(l) } })
+        .catch(() => live && setResults([])).finally(() => live && setSearching(false))
+    }, 450)
+    return () => { live = false; clearTimeout(h) }
+  }, [q, mode, online])
   const cur = byId.get(queue[qi])
 
   // ---------- playback ----------
@@ -162,7 +188,20 @@ export default function App() {
     const name = (prompt('Playlist name') || '').trim(); if (!name) return
     savePl({ id: 'pl' + Date.now(), name, ids: tid ? [tid] : [] })
   }
-  function toggleLike(id) { setLiked((l) => { const n = { ...l }; n[id] ? delete n[id] : (n[id] = 1); return n }) }
+  function saveOnline(t) {
+    if (tracks.some((x) => x.id === t.id)) return
+    put(db.current, t); setTracks((x) => [...x, t])
+  }
+  function ensureSaved(id) { const t = byId.get(id); if (t && t.online) saveOnline(t) }
+  async function downloadTrack(t) {
+    if (!navigator.onLine) return flash('You are offline')
+    flash('Downloading…')
+    try {
+      const f = await downloadOffline(t)
+      put(db.current, f); setTracks((x) => [...x.filter((y) => y.id !== f.id), f]); flash('Saved for offline')
+    } catch { flash('Download failed') }
+  }
+  function toggleLike(id) { ensureSaved(id); setLiked((l) => { const n = { ...l }; n[id] ? delete n[id] : (n[id] = 1); return n }) }
   function removeTrack(id) {
     del(db.current, id)
     playlists.filter((p) => p.ids.includes(id)).forEach((p) => savePl({ ...p, ids: p.ids.filter((x) => x !== id) }))
@@ -176,23 +215,26 @@ export default function App() {
     setSheet({
       title: 'Add to playlist', sub: '',
       items: [
-        { label: '＋ New playlist', onClick: () => newPlaylist(tid) },
-        ...playlists.map((p) => ({ label: p.name, onClick: () => !p.ids.includes(tid) && savePl({ ...p, ids: [...p.ids, tid] }) })),
+        { label: '＋ New playlist', onClick: () => { ensureSaved(tid); newPlaylist(tid) } },
+        ...playlists.map((p) => ({ label: p.name, onClick: () => { ensureSaved(tid); !p.ids.includes(tid) && savePl({ ...p, ids: [...p.ids, tid] }) } })),
       ],
     })
   }
   function trackMenu(t, plId) {
-    setSheet({
-      title: t.title, sub: t.artist,
-      items: [
-        { label: 'Play next', onClick: () => playNext(t.id) },
-        { label: 'Add to queue', onClick: () => addQ(t.id) },
-        { label: liked[t.id] ? 'Remove from Liked Songs' : 'Add to Liked Songs', onClick: () => toggleLike(t.id) },
-        { label: 'Add to playlist…', onClick: () => pickPlaylist(t.id) },
-        ...(plId ? [{ label: 'Remove from this playlist', onClick: () => { const p = playlists.find((x) => x.id === plId); savePl({ ...p, ids: p.ids.filter((x) => x !== t.id) }) } }] : []),
-        { label: 'Delete from library', danger: true, onClick: () => confirm('Delete this song from your library?') && removeTrack(t.id) },
-      ],
-    })
+    const inLib = tracks.some((x) => x.id === t.id)
+    const items = [
+      { label: 'Play next', onClick: () => playNext(t.id) },
+      { label: 'Add to queue', onClick: () => addQ(t.id) },
+      { label: liked[t.id] ? 'Remove from Liked Songs' : 'Add to Liked Songs', onClick: () => toggleLike(t.id) },
+      { label: 'Add to playlist…', onClick: () => pickPlaylist(t.id) },
+    ]
+    if (t.online && !inLib) items.push({ label: 'Save to library', onClick: () => { saveOnline(t); flash('Saved to library') } })
+    if (t.online) items.push(t.downloadable
+      ? { label: 'Download for offline', onClick: () => downloadTrack(t) }
+      : { label: 'Offline not allowed by artist', onClick: () => flash('The artist has not enabled downloads for this song') })
+    if (plId) items.push({ label: 'Remove from this playlist', onClick: () => { const p = playlists.find((x) => x.id === plId); savePl({ ...p, ids: p.ids.filter((x) => x !== t.id) }) } })
+    if (inLib) items.push({ label: 'Delete from library', danger: true, onClick: () => confirm('Delete this song from your library?') && removeTrack(t.id) })
+    setSheet({ title: t.title, sub: t.artist, items })
   }
   function addMenu() {
     setSheet({ items: [
@@ -269,22 +311,33 @@ export default function App() {
               <div className="onb"><b>Add your music</b><span>Songs you add stay on this phone and play offline.</span>
                 <button className="pill p" onClick={() => fileIn.current.click()}>+ Add songs</button></div>
             )}
+            {online && trend.length > 0 && (<><h3>Trending Online</h3><div className="hs">
+              {trend.map((t, i) => <Card key={t.id} art={artBg(t)} title={t.title} sub={t.artist} onClick={() => startPlay(ids(trend), i)} />)}</div></>)}
           </section>
         ) : tab === 'search' ? (
           <section className="view">
             <h1>Search</h1>
-            <input type="search" placeholder="Songs, albums, artists" value={q} onChange={(e) => setQ(e.target.value)} />
-            {ql ? (() => {
-              const s = tracks.filter((t) => (t.title + ' ' + t.artist + ' ' + albumOf(t)).toLowerCase().includes(ql))
+            <input type="search" placeholder={mode === 'online' ? 'Search millions of songs' : 'Songs, albums, artists'} value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="chips">
+              {[['online', 'Online'], ['library', 'Your library']].map(([k, l]) => (
+                <button key={k} className={mode === k ? 'on' : ''} onClick={() => setMode(k)}>{l}</button>))}
+            </div>
+            {mode === 'online' ? (<>
+              {!online ? empty('You are offline. Your downloaded songs still play from Library.')
+                : ql.length > 1 ? (results.length ? results.map((t, i) => rowOf(t, results, i)) : empty(searching ? 'Searching…' : 'No results.'))
+                : (<><h3>Trending</h3>{trend.length ? trend.map((t, i) => rowOf(t, trend, i)) : empty('Loading…')}</>)}
+              <div className="stat">Music from Audius. Artists keep all rights.</div>
+            </>) : (ql ? (() => {
+              const s2 = tracks.filter((t) => (t.title + ' ' + t.artist + ' ' + albumOf(t)).toLowerCase().includes(ql))
               const al = albums.filter(([n]) => n.toLowerCase().includes(ql))
               const ar = artists.filter(([n]) => n.toLowerCase().includes(ql))
               return (<>
                 {ar.length > 0 && <><h3>Artists</h3>{ar.map(([n, l]) => <Item key={n} round art={artBg(coverFor(l, n))} title={n} sub={l.length + ' songs'} onClick={() => open('artist', n)} />)}</>}
                 {al.length > 0 && <><h3>Albums</h3>{al.map(([n, l]) => <Item key={n} art={artBg(coverFor(l, n))} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</>}
-                {s.length > 0 && <><h3>Songs</h3>{s.map((t, i) => rowOf(t, s, i))}</>}
-                {!s.length && !al.length && !ar.length && empty('No results.')}
+                {s2.length > 0 && <><h3>Songs</h3>{s2.map((t, i) => rowOf(t, s2, i))}</>}
+                {!s2.length && !al.length && !ar.length && empty('No results.')}
               </>)
-            })() : empty(tracks.length ? 'Search your library.' : 'Your library is empty.')}
+            })() : empty(tracks.length ? 'Search your library.' : 'Your library is empty.'))}
           </section>
         ) : (
           <section className="view">
@@ -335,6 +388,7 @@ export default function App() {
         onJump={(i) => { if (load(queue[i]) !== false) setQi(i) }}
         onRemove={(i) => setQueue(queue.filter((_, k) => k !== i))} />}
 
+      {toast && <div className="toast">{toast}</div>}
       <Sheet s={sheet} onClose={() => setSheet(null)} />
     </div>
   )

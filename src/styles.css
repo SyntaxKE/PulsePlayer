@@ -102,3 +102,4 @@ input[type=range]::-moz-range-thumb{width:0;height:0;border:0}
 .qh button{background:none;border:none;color:var(--acc);font:inherit;font-size:16px;font-weight:600;cursor:pointer}
 .qb{overflow:auto;padding:0 18px 30px}
 .ql{display:block;color:var(--mut);font-size:13px;margin:14px 0 4px;font-weight:600}
+.toast{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(140px + env(safe-area-inset-bottom,0px));background:#2c2c31;color:#fff;padding:10px 16px;border-radius:99px;font-size:14px;z-index:40;box-shadow:0 8px 24px rgba(0,0,0,.5);white-space:nowrap}
