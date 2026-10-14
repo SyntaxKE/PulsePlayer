@@ -1,0 +1,7 @@
+{
+  "appId": "com.syntax.pulse",
+  "appName": "Pulse",
+  "webDir": "dist",
+  "backgroundColor": "#000000",
+  "server": { "androidScheme": "https" }
+}
