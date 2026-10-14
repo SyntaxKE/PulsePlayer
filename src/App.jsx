@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { openDB, getAll, put, del } from './db.js'
 import { readTags } from './id3.js'
 import { searchOnline, trending, downloadOffline } from './online.js'
+import { searchYT, ytAudio, isNative } from './youtube.js'
 import { artBg, artUrl, coverFor } from './art.js'
 import { Row, Item, Card, Sheet, MiniPlayer, FullPlayer, QueueView, DetailHead } from './components.jsx'
 
@@ -20,6 +21,7 @@ export default function App() {
   const objUrl = useRef(null)
   const fileIn = useRef(null)
   const toastT = useRef(null)
+  const seqRef = useRef(0)
 
   const [tracks, setTracks] = useState([])
   const [playlists, setPlaylists] = useState([])
@@ -44,7 +46,8 @@ export default function App() {
   const [trend, setTrend] = useState([])
   const [results, setResults] = useState([])
   const [searching, setSearching] = useState(false)
-  const [mode, setMode] = useState('online')
+  const [mode, setMode] = useState('yt')
+  const [err, setErr] = useState('')
   const [toast, setToast] = useState('')
 
   useEffect(() => {
@@ -72,12 +75,14 @@ export default function App() {
   }, [online]) // eslint-disable-line
   useEffect(() => {
     const s = q.trim()
-    if (mode !== 'online' || s.length < 2 || !online) { setResults([]); setSearching(false); return }
+    if (mode === 'library' || s.length < 2 || !online) { setResults([]); setSearching(false); return }
     let live = true
-    setSearching(true)
+    setSearching(true); setErr('')
+    const fn = mode === 'yt' ? searchYT : searchOnline
     const h = setTimeout(() => {
-      searchOnline(s).then((l) => { if (live) { registerNet(l); setResults(l) } })
-        .catch(() => live && setResults([])).finally(() => live && setSearching(false))
+      fn(s).then((l) => { if (live) { registerNet(l); setResults(l) } })
+        .catch((e) => { if (live) { setResults([]); setErr(e.message || 'failed') } })
+        .finally(() => live && setSearching(false))
     }, 450)
     return () => { live = false; clearTimeout(h) }
   }, [q, mode, online])
@@ -88,8 +93,17 @@ export default function App() {
     const t = byId.get(id); if (!t) return false
     if (t.type === 'url' && !navigator.onLine) { alert('Streams need a connection.'); return false }
     if (objUrl.current) { URL.revokeObjectURL(objUrl.current); objUrl.current = null }
-    a.src = t.blob ? (objUrl.current = URL.createObjectURL(t.blob)) : t.url
-    a.play().catch(() => {})
+    const seq = ++seqRef.current
+    if (t.yt) {
+      a.pause(); setToast('Loading…')
+      ytAudio(t.vid).then((blob) => {
+        if (seq !== seqRef.current) return
+        objUrl.current = URL.createObjectURL(blob); a.src = objUrl.current; a.play().catch(() => {}); setToast('')
+      }).catch((e) => { if (seq === seqRef.current) flash('YouTube blocked this song: ' + e.message) })
+    } else {
+      a.src = t.blob ? (objUrl.current = URL.createObjectURL(t.blob)) : t.url
+      a.play().catch(() => {})
+    }
     setPlayed((p) => ({ ...p, [id]: Date.now() }))
     if ('mediaSession' in navigator) {
       try {
@@ -229,7 +243,7 @@ export default function App() {
       { label: 'Add to playlist…', onClick: () => pickPlaylist(t.id) },
     ]
     if (t.online && !inLib) items.push({ label: 'Save to library', onClick: () => { saveOnline(t); flash('Saved to library') } })
-    if (t.online) items.push(t.downloadable
+    if (t.online && !t.yt) items.push(t.downloadable
       ? { label: 'Download for offline', onClick: () => downloadTrack(t) }
       : { label: 'Offline not allowed by artist', onClick: () => flash('The artist has not enabled downloads for this song') })
     if (plId) items.push({ label: 'Remove from this playlist', onClick: () => { const p = playlists.find((x) => x.id === plId); savePl({ ...p, ids: p.ids.filter((x) => x !== t.id) }) } })
@@ -307,22 +321,26 @@ export default function App() {
               <div className="hs">{albums.map(([n, l]) => <Card key={n} art={artBg(coverFor(l, n))} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</div>
               <h3>Recently Added</h3>
               <div className="hs">{[...tracks].reverse().slice(0, 10).map((t, i, arr) => <Card key={t.id} art={artBg(t)} title={t.title} sub={t.artist} onClick={() => startPlay(ids(arr), i)} />)}</div>
-            </>) : (
-              <div className="onb"><b>Add your music</b><span>Songs you add stay on this phone and play offline.</span>
-                <button className="pill p" onClick={() => fileIn.current.click()}>+ Add songs</button></div>
-            )}
+            </>) : null}
+            {!tracks.length && !(online && trend.length) && empty('Tap ＋ below to add your songs.')}
             {online && trend.length > 0 && (<><h3>Trending Online</h3><div className="hs">
               {trend.map((t, i) => <Card key={t.id} art={artBg(t)} title={t.title} sub={t.artist} onClick={() => startPlay(ids(trend), i)} />)}</div></>)}
           </section>
         ) : tab === 'search' ? (
           <section className="view">
             <h1>Search</h1>
-            <input type="search" placeholder={mode === 'online' ? 'Search millions of songs' : 'Songs, albums, artists'} value={q} onChange={(e) => setQ(e.target.value)} />
+            <input type="search" placeholder={mode === 'library' ? 'Songs, albums, artists' : 'Search songs and artists'} value={q} onChange={(e) => setQ(e.target.value)} />
             <div className="chips">
-              {[['online', 'Online'], ['library', 'Your library']].map(([k, l]) => (
+              {[['yt', 'YouTube'], ['online', 'Audius'], ['library', 'Library']].map(([k, l]) => (
                 <button key={k} className={mode === k ? 'on' : ''} onClick={() => setMode(k)}>{l}</button>))}
             </div>
-            {mode === 'online' ? (<>
+            {mode === 'yt' ? (<>
+              {!isNative ? empty('YouTube works only in the installed Android app.')
+                : !online ? empty('You are offline. Your songs still play from Library.')
+                : ql.length > 1 ? (results.length ? results.map((t, i) => rowOf(t, results, i)) : empty(searching ? 'Searching…' : err ? 'YouTube request failed: ' + err : 'No results.'))
+                : empty('Search YouTube Music for any song or artist.')}
+              <div className="stat">Experimental. Unofficial YouTube access, can stop working.</div>
+            </>) : mode === 'online' ? (<>
               {!online ? empty('You are offline. Your downloaded songs still play from Library.')
                 : ql.length > 1 ? (results.length ? results.map((t, i) => rowOf(t, results, i)) : empty(searching ? 'Searching…' : 'No results.'))
                 : (<><h3>Trending</h3>{trend.length ? trend.map((t, i) => rowOf(t, trend, i)) : empty('Loading…')}</>)}
@@ -341,7 +359,7 @@ export default function App() {
           </section>
         ) : (
           <section className="view">
-            <div className="lh"><h1>Library</h1><button className="plus" onClick={addMenu} aria-label="Add">＋</button></div>
+            <div className="lh"><h1>Library</h1></div>
             <div className="chips">
               {[['playlists', 'Playlists'], ['albums', 'Albums'], ['artists', 'Artists'], ['songs', 'Songs']].map(([k, l]) => (
                 <button key={k} className={libTab === k ? 'on' : ''} onClick={() => setLibTab(k)}>{l}</button>))}
@@ -359,7 +377,7 @@ export default function App() {
               : empty('No artists yet.'))}
             {libTab === 'songs' && (() => {
               const s = [...tracks].sort((x, y) => x.title.localeCompare(y.title))
-              return s.length ? s.map((t, i) => rowOf(t, s, i)) : empty('No songs yet. Tap ＋ to add some.')
+              return s.length ? s.map((t, i) => rowOf(t, s, i)) : empty('No songs yet. Tap ＋ below to add some.')
             })()}
             <div className="stat">{online ? 'Online' : 'Offline'} · {tracks.length} songs on this device</div>
           </section>
@@ -375,6 +393,7 @@ export default function App() {
         {[['home', '◉', 'Home'], ['search', '⌕', 'Search'], ['lib', '≡', 'Library']].map(([k, ic, l]) => (
           <button key={k} className={tab === k ? 'on' : ''} onClick={() => goTab(k)}><span>{ic}</span>{l}</button>
         ))}
+        <button className="addb" onClick={addMenu}><span>＋</span>Add</button>
       </nav>
 
       <FullPlayer t={cur} open={full} playing={playing} time={time} shuf={shuf} rep={rep} vol={vol}
