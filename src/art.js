@@ -1,6 +1,7 @@
 const urls = new Map()
 const hue = (s) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h }
 export function artBg(t) {
+  if (t.bg) return t.bg
   if (t.artUrl) return `url(${t.artUrl})`
   if (t.pic) {
     if (!urls.has(t.id)) urls.set(t.id, URL.createObjectURL(t.pic))

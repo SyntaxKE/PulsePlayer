@@ -3,15 +3,20 @@ import { openDB, getAll, put, del } from './db.js'
 import { readTags } from './id3.js'
 import { searchOnline, trending, downloadOffline } from './online.js'
 import { searchYT, ytAudio, isNative } from './youtube.js'
-import { artBg, artUrl, coverFor } from './art.js'
-import { Row, Item, Card, Sheet, MiniPlayer, FullPlayer, QueueView, DetailHead } from './components.jsx'
+import { artUrl, coverFor, fmt } from './art.js'
+import {
+  AudioLines, Home, Search, LibraryBig, Plus, Heart, Music2, Shuffle, SkipBack, SkipForward,
+  Play, Pause, Repeat2, Repeat1, MoreHorizontal, ListMusic, Volume2, X, Menu, ChevronLeft, WifiOff,
+} from 'lucide-react'
+import { Cover, SongRow, AlbumCard, Sheet } from './components.jsx'
+import './App.css'
 
 const shuffleArr = (a) => { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]] } return a }
 const groupBy = (list, f) => { const m = new Map(); list.forEach((t) => { const k = f(t); if (!m.has(k)) m.set(k, []); m.get(k).push(t) }); return m }
 const albumOf = (t) => t.album || 'Singles'
 const ls = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) || d } catch { return d } }
 const ids = (l) => l.map((t) => t.id)
-const LIKED_ART = { id: 'g:liked', title: 'Liked' }
+const LIKED_ART = { id: 'g:liked', title: 'Liked', bg: 'linear-gradient(135deg,#a34cff,#4b2bb5)' }
 
 export default function App() {
   const audio = useRef(null)
@@ -37,7 +42,8 @@ export default function App() {
   const [tab, setTab] = useState('home')
   const [libTab, setLibTab] = useState('playlists')
   const [detail, setDetail] = useState(null)
-  const [full, setFull] = useState(false)
+  const [drawer, setDrawer] = useState(false)
+  const contentRef = useRef(null)
   const [qOpen, setQOpen] = useState(false)
   const [sheet, setSheet] = useState(null)
   const [q, setQ] = useState('')
@@ -219,7 +225,7 @@ export default function App() {
   function removeTrack(id) {
     del(db.current, id)
     playlists.filter((p) => p.ids.includes(id)).forEach((p) => savePl({ ...p, ids: p.ids.filter((x) => x !== id) }))
-    if (queue[qi] === id) { a.pause(); a.removeAttribute('src'); setQueue([]); setQi(0); setFull(false); setQOpen(false) }
+    if (queue[qi] === id) { a.pause(); a.removeAttribute('src'); setQueue([]); setQi(0); setQOpen(false) }
     else { const c = queue[qi]; const nq = queue.filter((x) => x !== id); setQueue(nq); setQi(Math.max(0, nq.indexOf(c))) }
     setTracks((x) => x.filter((t) => t.id !== id))
   }
@@ -280,134 +286,239 @@ export default function App() {
   }
   const up = queue.map((id, i) => ({ t: byId.get(id), i })).filter((x) => x.i > qi && x.t)
 
-  const empty = (m) => <div className="empty">{m}</div>
+  const empty = (m) => <div className="empty-state">{m}</div>
+  const PH = { id: 'g:none', title: 'Pulse' }
+  const dur = isFinite(time.d) && time.d > 0 ? time.d : 0
+  const prog = (v) => ({ '--progress': v + '%' })
   const rowOf = (t, list, i, plId) => (
-    <Row key={t.id + ':' + i} t={t} active={cur?.id === t.id} liked={!!liked[t.id]}
+    <SongRow key={t.id + ':' + i} t={t} active={cur?.id === t.id} liked={!!liked[t.id]}
       dim={t.type === 'url' && !online}
-      onPlay={() => startPlay(ids(list), i)} onMenu={() => trackMenu(t, plId)} />
+      onClick={() => startPlay(ids(list), i)} onMore={() => trackMenu(t, plId)} />
   )
-  const open = (kind, key) => setDetail({ kind, key })
+  const open = (kind, key) => { setDetail({ kind, key }); setDrawer(false); contentRef.current?.scrollTo({ top: 0 }) }
+  const nav = (k) => { setTab(k); setDetail(null); setDrawer(false); contentRef.current?.scrollTo({ top: 0 }) }
   const playAll = (list) => { setShuf(false); startPlay(ids(list), 0, false) }
   const shufAll = (list) => { setShuf(true); startPlay(ids(list), Math.floor(Math.random() * list.length), true) }
-  const goTab = (k) => { setTab(k); setDetail(null) }
-  const plCard = (p) => { const l = p.ids.map((i) => byId.get(i)).filter(Boolean); return { art: artBg(coverFor(l, p.name)), sub: l.length + ' songs' } }
+  const plArt = (p) => coverFor(p.ids.map((i) => byId.get(i)).filter(Boolean), p.name)
+  const plCount = (p) => p.ids.filter((i) => byId.get(i)).length + ' songs'
+  const seek = (v) => { if (isFinite(a.duration)) a.currentTime = Number(v) }
+  const repIcon = rep === 2 ? <Repeat1 size={21} /> : <Repeat2 size={21} />
+  const likedNow = cur ? !!liked[cur.id] : false
+
+  const hero = (
+    <section className="now-playing-section">
+      <div className="ambient-glow" />
+      <div className="player-art-wrap"><Cover t={cur || PH} className="player-art" /></div>
+      <div className="track-heading"><h1>{cur ? cur.title : 'Nothing playing'}</h1><p>{cur ? cur.artist : 'Search or add songs to start'}</p></div>
+      <div className="track-actions">
+        <button className={`icon-button like-button ${likedNow ? 'liked' : ''}`} onClick={() => cur && toggleLike(cur.id)} aria-label="Like song"><Heart size={23} fill={likedNow ? 'currentColor' : 'none'} /></button>
+        <button className="icon-button queue-open" onClick={() => setQOpen(true)} aria-label="Queue"><ListMusic size={23} /></button>
+        <button className="icon-button" onClick={() => cur && trackMenu(cur)} aria-label="More options"><MoreHorizontal size={24} /></button>
+      </div>
+      <div className="seek-area">
+        <input aria-label="Track progress" className="range seek-range" type="range" min="0" max={dur || 100} value={Math.min(time.c, dur || 100)} onChange={(e) => seek(e.target.value)} style={prog(dur ? (time.c / dur) * 100 : 0)} />
+        <div className="time-labels"><span>{fmt(time.c)}</span><span>{fmt(dur)}</span></div>
+      </div>
+      <div className="player-controls">
+        <button className={`icon-button secondary-control ${shuf ? 'control-on' : ''}`} onClick={toggleShuf} aria-label="Shuffle"><Shuffle size={20} /></button>
+        <button className="icon-button" onClick={prev} aria-label="Previous track"><SkipBack size={25} fill="currentColor" /></button>
+        <button className="play-button" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause size={27} fill="currentColor" /> : <Play size={27} fill="currentColor" />}</button>
+        <button className="icon-button" onClick={() => next(false)} aria-label="Next track"><SkipForward size={25} fill="currentColor" /></button>
+        <button className={`icon-button secondary-control ${rep ? 'control-on' : ''}`} onClick={() => setRep((rep + 1) % 3)} aria-label="Repeat">{repIcon}</button>
+      </div>
+    </section>
+  )
+
+  const recentAdded = [...tracks].reverse().slice(0, 10)
+  const homeSections = (
+    <section className="recent-section">
+      {recent.length > 0 && (<><div className="section-title-row"><h2>Recently played</h2></div>
+        <div className="album-grid home-grid">{recent.map((t, i) => <AlbumCard key={t.id} art={t} title={t.title} sub={t.artist} onClick={() => startPlay(ids(recent), i)} />)}</div></>)}
+      {recentAdded.length > 0 && (<><div className="section-title-row"><h2>Recently added</h2></div>
+        <div className="album-grid home-grid">{recentAdded.map((t, i) => <AlbumCard key={t.id} art={t} title={t.title} sub={t.artist} onClick={() => startPlay(ids(recentAdded), i)} />)}</div></>)}
+      {albums.length > 0 && (<><div className="section-title-row"><h2>Albums</h2></div>
+        <div className="album-grid home-grid">{albums.slice(0, 10).map(([n, l]) => <AlbumCard key={n} art={coverFor(l, n)} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</div></>)}
+      {online && trend.length > 0 && (<><div className="section-title-row"><h2>Trending online</h2></div>
+        <div className="album-grid home-grid">{trend.slice(0, 10).map((t, i) => <AlbumCard key={t.id} art={t} title={t.title} sub={t.artist} onClick={() => startPlay(ids(trend), i)} />)}</div></>)}
+      {!tracks.length && !(online && trend.length) && empty('Tap + to add songs from your phone, or open Search to find music on YouTube.')}
+    </section>
+  )
+
+  const searchView = (
+    <section className="recent-section view-pad">
+      <div className="section-title-row"><h2>Search</h2></div>
+      <div className="chip-row">
+        {[['yt', 'YouTube'], ['online', 'Audius'], ['library', 'Library']].map(([k, l]) => (
+          <button key={k} className={`chip ${mode === k ? 'on' : ''}`} onClick={() => setMode(k)}>{l}</button>))}
+      </div>
+      {mode === 'yt' ? (<>
+        {!isNative ? empty('YouTube works only in the installed Android app.')
+          : !online ? empty('You are offline. Your songs still play from Library.')
+          : ql.length > 1 ? (results.length ? <div className="search-results">{results.map((t, i) => rowOf(t, results, i))}</div> : empty(searching ? 'Searching…' : err ? 'YouTube request failed: ' + err : 'No results.'))
+          : empty('Type in the search box above to find any song or artist.')}
+        <div className="note">Experimental. Unofficial YouTube access, can stop working.</div>
+      </>) : mode === 'online' ? (<>
+        {!online ? empty('You are offline. Your downloaded songs still play from Library.')
+          : ql.length > 1 ? (results.length ? <div className="search-results">{results.map((t, i) => rowOf(t, results, i))}</div> : empty(searching ? 'Searching…' : 'No results.'))
+          : (<><div className="sub-title">Trending</div>{trend.length ? <div className="search-results">{trend.map((t, i) => rowOf(t, trend, i))}</div> : empty('Loading…')}</>)}
+        <div className="note">Music from Audius. Artists keep all rights.</div>
+      </>) : (ql ? (() => {
+        const s2 = tracks.filter((t) => (t.title + ' ' + t.artist + ' ' + albumOf(t)).toLowerCase().includes(ql))
+        const al = albums.filter(([n]) => n.toLowerCase().includes(ql))
+        const ar = artists.filter(([n]) => n.toLowerCase().includes(ql))
+        return (<>
+          {ar.length > 0 && <><div className="sub-title">Artists</div><div className="album-grid">{ar.map(([n, l]) => <AlbumCard key={n} round art={coverFor(l, n)} title={n} sub={l.length + ' songs'} onClick={() => open('artist', n)} />)}</div></>}
+          {al.length > 0 && <><div className="sub-title">Albums</div><div className="album-grid">{al.map(([n, l]) => <AlbumCard key={n} art={coverFor(l, n)} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</div></>}
+          {s2.length > 0 && <><div className="sub-title">Songs</div><div className="search-results">{s2.map((t, i) => rowOf(t, s2, i))}</div></>}
+          {!s2.length && !al.length && !ar.length && empty('No results.')}
+        </>)
+      })() : empty(tracks.length ? 'Type in the search box above to search your library.' : 'Your library is empty.'))}
+    </section>
+  )
+
+  const libView = (
+    <section className="recent-section view-pad">
+      <div className="section-title-row"><h2>Your Library</h2><button className="btn-small" onClick={addMenu}><Plus size={16} /> Add music</button></div>
+      <div className="chip-row">
+        {[['playlists', 'Playlists'], ['albums', 'Albums'], ['artists', 'Artists'], ['songs', 'Songs']].map(([k, l]) => (
+          <button key={k} className={`chip ${libTab === k ? 'on' : ''}`} onClick={() => setLibTab(k)}>{l}</button>))}
+      </div>
+      {libTab === 'playlists' && (
+        <div className="album-grid">
+          <AlbumCard art={LIKED_ART} title="Liked Songs" sub={likedList.length + ' songs'} onClick={() => open('liked')} />
+          {playlists.map((p) => <AlbumCard key={p.id} art={plArt(p)} title={p.name} sub={plCount(p)} onClick={() => open('playlist', p.id)} />)}
+          <button className="album-card" onClick={() => newPlaylist()}><div className="album-cover-wrap newcover"><Plus size={34} /></div><strong>New playlist</strong><span>Create</span></button>
+        </div>)}
+      {libTab === 'albums' && (albums.length
+        ? <div className="album-grid">{albums.map(([n, l]) => <AlbumCard key={n} art={coverFor(l, n)} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</div>
+        : empty('No albums yet. Add songs with the + button.'))}
+      {libTab === 'artists' && (artists.length
+        ? <div className="album-grid">{artists.map(([n, l]) => <AlbumCard key={n} round art={coverFor(l, n)} title={n} sub={l.length + ' songs'} onClick={() => open('artist', n)} />)}</div>
+        : empty('No artists yet.'))}
+      {libTab === 'songs' && (() => {
+        const s2 = [...tracks].sort((x, y) => x.title.localeCompare(y.title))
+        return s2.length ? <div className="search-results">{s2.map((t, i) => rowOf(t, s2, i))}</div> : empty('No songs yet. Add some with the + button.')
+      })()}
+    </section>
+  )
+
+  const detailView = dd && (
+    <section className="recent-section">
+      <div className="detail-head">
+        <button className="icon-button" onClick={() => setDetail(null)} aria-label="Back"><ChevronLeft size={24} /></button>
+        <div className="detail-art"><Cover t={dd.cover} /></div>
+        <div className="detail-meta">
+          <span className="eyebrow">{detail.kind === 'playlist' || detail.kind === 'liked' ? 'Playlist' : detail.kind}</span>
+          <h1>{dd.title}</h1><p>{dd.sub}</p>
+          <div className="detail-actions">
+            <button className="btn-primary" onClick={() => playAll(dd.list)}><Play size={18} fill="currentColor" /> Play</button>
+            <button className="btn-ghost" onClick={() => dd.list.length && shufAll(dd.list)}><Shuffle size={18} /> Shuffle</button>
+          </div>
+        </div>
+      </div>
+      {dd.list.length ? <div className="search-results">{dd.list.map((t, i) => rowOf(t, dd.list, i, dd.pl?.id))}</div> : empty('No songs here yet. Use ⋯ on any song to add it.')}
+      {dd.pl && <button className="btn-danger" onClick={() => { if (confirm('Delete this playlist?')) { del(db.current, dd.pl.id, 'p'); setPlaylists((x) => x.filter((p) => p.id !== dd.pl.id)); setDetail(null) } }}>Delete playlist</button>}
+    </section>
+  )
+
+  const queueList = (
+    <div className="queue-list">
+      {cur && (<><div className="queue-label">Now playing</div><SongRow t={cur} active liked={likedNow} onClick={() => {}} /></>)}
+      <div className="queue-label">Playing next</div>
+      {up.length ? up.map(({ t, i }) => (
+        <SongRow key={t.id + ':' + i} t={t}
+          onClick={() => { if (load(queue[i]) !== false) setQi(i) }}
+          onRemove={() => setQueue(queue.filter((_, k) => k !== i))} />
+      )) : empty('Nothing queued. Use ⋯ on a song and pick Play next.')}
+    </div>
+  )
+
+  const navItems = [{ k: 'home', label: 'Home', Icon: Home }, { k: 'search', label: 'Search', Icon: Search }, { k: 'lib', label: 'Your Library', Icon: LibraryBig }]
 
   return (
-    <div id="app">
-      <main>
-        {dd ? (
-          <section className="view">
-            <DetailHead title={dd.title} sub={dd.sub} cover={dd.cover} onBack={() => setDetail(null)}
-              onPlay={() => playAll(dd.list)} onShuffle={() => dd.list.length && shufAll(dd.list)} />
-            {dd.list.length ? dd.list.map((t, i) => rowOf(t, dd.list, i, dd.pl?.id)) : empty('No songs here yet. Use ⋯ on any song to add it.')}
-            {dd.pl && <button className="pill del" onClick={() => { if (confirm('Delete this playlist?')) { del(db.current, dd.pl.id, 'p'); setPlaylists((x) => x.filter((p) => p.id !== dd.pl.id)); setDetail(null) } }}>Delete playlist</button>}
-          </section>
-        ) : tab === 'home' ? (
-          <section className="view">
-            <h1>{greet}</h1>
-            {tracks.length ? (<>
-              <div className="acts">
-                <button className="pill p" onClick={() => playAll(tracks)}>▶ Play all</button>
-                <button className="pill" onClick={() => shufAll(tracks)}>⇄ Shuffle</button>
-              </div>
-              {recent.length > 0 && (<><h3>Recently Played</h3><div className="hs">
-                {recent.map((t) => <Card key={t.id} art={artBg(t)} title={t.title} sub={t.artist} onClick={() => startPlay(ids(recent), recent.indexOf(t))} />)}</div></>)}
-              <h3>Your Playlists</h3>
-              <div className="hs">
-                <Card art="linear-gradient(135deg,#fa2d48,#6a1fd0)" title="Liked Songs" sub={likedList.length + ' songs'} onClick={() => open('liked')} />
-                {playlists.map((p) => { const c = plCard(p); return <Card key={p.id} art={c.art} title={p.name} sub={c.sub} onClick={() => open('playlist', p.id)} /> })}
-              </div>
-              <h3>Albums</h3>
-              <div className="hs">{albums.map(([n, l]) => <Card key={n} art={artBg(coverFor(l, n))} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</div>
-              <h3>Recently Added</h3>
-              <div className="hs">{[...tracks].reverse().slice(0, 10).map((t, i, arr) => <Card key={t.id} art={artBg(t)} title={t.title} sub={t.artist} onClick={() => startPlay(ids(arr), i)} />)}</div>
-            </>) : null}
-            {!tracks.length && !(online && trend.length) && empty('Tap ＋ below to add your songs.')}
-            {online && trend.length > 0 && (<><h3>Trending Online</h3><div className="hs">
-              {trend.map((t, i) => <Card key={t.id} art={artBg(t)} title={t.title} sub={t.artist} onClick={() => startPlay(ids(trend), i)} />)}</div></>)}
-          </section>
-        ) : tab === 'search' ? (
-          <section className="view">
-            <h1>Search</h1>
-            <input type="search" placeholder={mode === 'library' ? 'Songs, albums, artists' : 'Search songs and artists'} value={q} onChange={(e) => setQ(e.target.value)} />
-            <div className="chips">
-              {[['yt', 'YouTube'], ['online', 'Audius'], ['library', 'Library']].map(([k, l]) => (
-                <button key={k} className={mode === k ? 'on' : ''} onClick={() => setMode(k)}>{l}</button>))}
-            </div>
-            {mode === 'yt' ? (<>
-              {!isNative ? empty('YouTube works only in the installed Android app.')
-                : !online ? empty('You are offline. Your songs still play from Library.')
-                : ql.length > 1 ? (results.length ? results.map((t, i) => rowOf(t, results, i)) : empty(searching ? 'Searching…' : err ? 'YouTube request failed: ' + err : 'No results.'))
-                : empty('Search YouTube Music for any song or artist.')}
-              <div className="stat">Experimental. Unofficial YouTube access, can stop working.</div>
-            </>) : mode === 'online' ? (<>
-              {!online ? empty('You are offline. Your downloaded songs still play from Library.')
-                : ql.length > 1 ? (results.length ? results.map((t, i) => rowOf(t, results, i)) : empty(searching ? 'Searching…' : 'No results.'))
-                : (<><h3>Trending</h3>{trend.length ? trend.map((t, i) => rowOf(t, trend, i)) : empty('Loading…')}</>)}
-              <div className="stat">Music from Audius. Artists keep all rights.</div>
-            </>) : (ql ? (() => {
-              const s2 = tracks.filter((t) => (t.title + ' ' + t.artist + ' ' + albumOf(t)).toLowerCase().includes(ql))
-              const al = albums.filter(([n]) => n.toLowerCase().includes(ql))
-              const ar = artists.filter(([n]) => n.toLowerCase().includes(ql))
-              return (<>
-                {ar.length > 0 && <><h3>Artists</h3>{ar.map(([n, l]) => <Item key={n} round art={artBg(coverFor(l, n))} title={n} sub={l.length + ' songs'} onClick={() => open('artist', n)} />)}</>}
-                {al.length > 0 && <><h3>Albums</h3>{al.map(([n, l]) => <Item key={n} art={artBg(coverFor(l, n))} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</>}
-                {s2.length > 0 && <><h3>Songs</h3>{s2.map((t, i) => rowOf(t, s2, i))}</>}
-                {!s2.length && !al.length && !ar.length && empty('No results.')}
-              </>)
-            })() : empty(tracks.length ? 'Search your library.' : 'Your library is empty.'))}
-          </section>
-        ) : (
-          <section className="view">
-            <div className="lh"><h1>Library</h1></div>
-            <div className="chips">
-              {[['playlists', 'Playlists'], ['albums', 'Albums'], ['artists', 'Artists'], ['songs', 'Songs']].map(([k, l]) => (
-                <button key={k} className={libTab === k ? 'on' : ''} onClick={() => setLibTab(k)}>{l}</button>))}
-            </div>
-            {libTab === 'playlists' && (<>
-              <Item art="linear-gradient(135deg,#fa2d48,#6a1fd0)" title="Liked Songs" sub={likedList.length + ' songs'} onClick={() => open('liked')} />
-              {playlists.map((p) => { const c = plCard(p); return <Item key={p.id} art={c.art} title={p.name} sub={c.sub} onClick={() => open('playlist', p.id)} /> })}
-              <button className="pill ghost" onClick={() => newPlaylist()}>＋ New playlist</button>
-            </>)}
-            {libTab === 'albums' && (albums.length
-              ? <div className="grid">{albums.map(([n, l]) => <Card key={n} art={artBg(coverFor(l, n))} title={n} sub={l[0].artist} onClick={() => open('album', n)} />)}</div>
-              : empty('No albums yet.'))}
-            {libTab === 'artists' && (artists.length
-              ? artists.map(([n, l]) => <Item key={n} round art={artBg(coverFor(l, n))} title={n} sub={l.length + ' songs'} onClick={() => open('artist', n)} />)
-              : empty('No artists yet.'))}
-            {libTab === 'songs' && (() => {
-              const s = [...tracks].sort((x, y) => x.title.localeCompare(y.title))
-              return s.length ? s.map((t, i) => rowOf(t, s, i)) : empty('No songs yet. Tap ＋ below to add some.')
-            })()}
-            <div className="stat">{online ? 'Online' : 'Offline'} · {tracks.length} songs on this device</div>
-          </section>
-        )}
-      </main>
+    <div className="app-shell">
+      <aside className={`sidebar ${drawer ? 'sidebar-open' : ''}`}>
+        <div className="brand"><span className="brand-mark"><AudioLines size={30} strokeWidth={2.7} /></span><span>Pulse</span>
+          <button className="icon-button close-sidebar" onClick={() => setDrawer(false)} aria-label="Close menu"><X /></button></div>
+        <nav className="main-nav">
+          {navItems.map(({ k, label, Icon }) => (
+            <button key={k} className={`nav-item ${!detail && tab === k ? 'active' : ''}`} onClick={() => nav(k)}><Icon size={21} /><span>{label}</span></button>
+          ))}
+        </nav>
+        <div className="sidebar-divider" />
+        <div className="sidebar-heading">Playlists</div>
+        <button className="nav-item" onClick={() => { setDrawer(false); newPlaylist() }}><Plus size={22} /><span>Create Playlist</span></button>
+        <button className={`nav-item playlist-item ${detail?.kind === 'liked' ? 'active' : ''}`} onClick={() => open('liked')}><Heart className="heart-fill" size={20} fill="currentColor" /><span>Liked Songs</span></button>
+        {playlists.map((p) => (
+          <button key={p.id} className={`nav-item playlist-item ${detail?.kind === 'playlist' && detail.key === p.id ? 'active' : ''}`} onClick={() => open('playlist', p.id)}><Music2 size={19} /><span>{p.name}</span></button>
+        ))}
+        <button className="nav-item add-music" onClick={() => { setDrawer(false); addMenu() }}><Plus size={22} /><span>Add music</span></button>
+        <div className="sidebar-bottom" onClick={() => cur && nav('home')}>
+          <Cover t={cur || PH} className="mini-cover" />
+          <div className="mini-track"><strong>{cur ? cur.title : 'Nothing playing'}</strong><span>{cur ? cur.artist : 'Pulse'}</span></div>
+          <button className="icon-button mini-play" onClick={(e) => { e.stopPropagation(); toggle() }} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause size={19} /> : <Play size={19} />}</button>
+        </div>
+      </aside>
+
+      {drawer && <button className="mobile-scrim" onClick={() => setDrawer(false)} aria-label="Close navigation" />}
+
+      <div className="main-column">
+        <header className="topbar">
+          <button className="icon-button menu-toggle" onClick={() => setDrawer(true)} aria-label="Open menu"><Menu /></button>
+          <label className="search-box">
+            <Search size={20} />
+            <input value={q} onChange={(e) => { setQ(e.target.value); if (e.target.value) { setTab('search'); setDetail(null) } }} placeholder="Search songs, artists, albums..." />
+            {q && <button className="icon-button clear-search" onClick={() => setQ('')} aria-label="Clear search"><X size={17} /></button>}
+          </label>
+          <div className="topbar-actions">
+            {!online && <span className="offline-chip"><WifiOff size={13} /> Offline</span>}
+            <button className="add-btn" onClick={addMenu} aria-label="Add music"><Plus size={22} /></button>
+          </div>
+        </header>
+        <main className="content" ref={contentRef}>
+          {dd ? detailView : tab === 'home' ? (<>{hero}{homeSections}</>) : tab === 'search' ? searchView : libView}
+        </main>
+      </div>
+
+      <aside className="queue-panel">
+        <div className="queue-tabs"><button className="selected">Queue</button></div>
+        {queueList}
+      </aside>
+
+      <footer className="bottom-player">
+        <div className="bottom-track" onClick={() => nav('home')}>
+          <Cover t={cur || PH} />
+          <div><strong>{cur ? cur.title : 'Nothing playing'}</strong><span>{cur ? cur.artist : 'Pulse'}</span></div>
+          <button className={`icon-button bottom-like ${likedNow ? 'liked' : ''}`} onClick={(e) => { e.stopPropagation(); cur && toggleLike(cur.id) }} aria-label="Like song"><Heart size={21} fill={likedNow ? 'currentColor' : 'none'} /></button>
+        </div>
+        <div className="bottom-center">
+          <div className="bottom-controls">
+            <button className={`icon-button secondary-control ${shuf ? 'control-on' : ''}`} onClick={toggleShuf} aria-label="Shuffle"><Shuffle size={18} /></button>
+            <button className="icon-button" onClick={prev} aria-label="Previous"><SkipBack size={21} fill="currentColor" /></button>
+            <button className="bottom-play" onClick={toggle} aria-label={playing ? 'Pause' : 'Play'}>{playing ? <Pause size={21} fill="currentColor" /> : <Play size={21} fill="currentColor" />}</button>
+            <button className="icon-button" onClick={() => next(false)} aria-label="Next"><SkipForward size={21} fill="currentColor" /></button>
+            <button className={`icon-button secondary-control ${rep ? 'control-on' : ''}`} onClick={() => setRep((rep + 1) % 3)} aria-label="Repeat">{rep === 2 ? <Repeat1 size={19} /> : <Repeat2 size={19} />}</button>
+          </div>
+          <div className="bottom-seek"><span>{fmt(time.c)}</span>
+            <input className="range" type="range" min="0" max={dur || 100} value={Math.min(time.c, dur || 100)} onChange={(e) => seek(e.target.value)} aria-label="Track progress" style={prog(dur ? (time.c / dur) * 100 : 0)} />
+            <span>{fmt(dur)}</span></div>
+        </div>
+        <div className="bottom-tools">
+          <button className="icon-button" onClick={() => setQOpen(true)} aria-label="Queue"><ListMusic size={21} /></button>
+          <Volume2 size={21} />
+          <input className="range volume-range" aria-label="Volume" type="range" min="0" max="100" value={vol} onChange={(e) => { setVol(Number(e.target.value)); a.volume = e.target.value / 100 }} style={prog(vol)} />
+        </div>
+      </footer>
 
       <input ref={fileIn} type="file" accept="audio/*" multiple hidden onChange={(e) => { addFiles([...e.target.files]); e.target.value = '' }} />
 
-      <MiniPlayer t={cur} playing={playing} progress={time.d ? time.c / time.d : 0}
-        onOpen={() => setFull(true)} onToggle={toggle} onNext={() => next(false)} />
-
-      <nav>
-        {[['home', '◉', 'Home'], ['search', '⌕', 'Search'], ['lib', '≡', 'Library']].map(([k, ic, l]) => (
-          <button key={k} className={tab === k ? 'on' : ''} onClick={() => goTab(k)}><span>{ic}</span>{l}</button>
-        ))}
-        <button className="addb" onClick={addMenu}><span>＋</span>Add</button>
-      </nav>
-
-      <FullPlayer t={cur} open={full} playing={playing} time={time} shuf={shuf} rep={rep} vol={vol}
-        liked={cur ? !!liked[cur.id] : false} onLike={() => cur && toggleLike(cur.id)} onQueue={() => setQOpen(true)}
-        onClose={() => setFull(false)} onToggle={toggle} onNext={() => next(false)} onPrev={prev}
-        onShuf={toggleShuf} onRep={() => setRep((rep + 1) % 3)}
-        onSeek={(r) => { if (isFinite(a.duration)) a.currentTime = r * a.duration }}
-        onVol={(v) => { setVol(v); a.volume = v / 100 }} />
-
-      {qOpen && <QueueView cur={cur} up={up} onClose={() => setQOpen(false)}
-        onJump={(i) => { if (load(queue[i]) !== false) setQi(i) }}
-        onRemove={(i) => setQueue(queue.filter((_, k) => k !== i))} />}
-
-      {toast && <div className="toast">{toast}</div>}
+      {qOpen && (
+        <div className="queue-overlay">
+          <div className="queue-tabs"><button className="selected">Queue</button><button className="icon-button" onClick={() => setQOpen(false)} aria-label="Close queue"><X size={22} /></button></div>
+          {queueList}
+        </div>
+      )}
+      {toast && <div className="toast" role="status">{toast}</div>}
       <Sheet s={sheet} onClose={() => setSheet(null)} />
     </div>
   )
